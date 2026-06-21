@@ -1,3 +1,4 @@
+
 import { useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -8,21 +9,58 @@ import {
   RefreshCw,
   UserPlus,
   Users,
+  AlertTriangle,
+  Flame,
+  Minus,
+  ListTodo,
+  List,
+  Clock,
 } from "lucide-react";
 import type { ReworkItem, ReworkStatus, Worker } from "@/types";
 import StatusBadge from "@/components/StatusBadge";
 import PhotoInput from "@/components/PhotoInput";
 import { useAppStore } from "@/store/useAppStore";
-import { calcIsPass, getProcessByType } from "@/data/processData";
+import { calcIsPass } from "@/data/processData";
 
-const FILTERS: { key: ReworkStatus | "all"; label: string }[] = [
-  { key: "all", label: "全部" },
-  { key: "pending", label: "待返工" },
-  { key: "rechecking", label: "待复测" },
-  { key: "passed", label: "已合格" },
-];
+type ViewMode = "list" | "todo";
+type GroupBy = "worker" | "process" | "severity";
+type SeverityLevel = "severe" | "medium" | "mild";
 
-function WorkerAvatar({ worker, size = "md" }: { worker?: Pick<Worker, "name" | "color"> | null; size?: "sm" | "md" | "lg" }) {
+const SEVERITY_LABEL: Record<SeverityLevel, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
+  severe: {
+    label: "严重",
+    color: "text-site-fail",
+    bg: "bg-site-failBg",
+    icon: <Flame size={18} strokeWidth={2.5} />,
+  },
+  medium: {
+    label: "一般",
+    color: "text-site-warn",
+    bg: "bg-site-warnBg",
+    icon: <AlertTriangle size={18} strokeWidth={2.5} />,
+  },
+  mild: {
+    label: "轻微",
+    color: "text-site-pass",
+    bg: "bg-site-passBg",
+    icon: <Minus size={18} strokeWidth={2.5} />,
+  },
+};
+
+function getSeverity(item: ReworkItem): SeverityLevel {
+  const ratio = item.allowDeviation > 0 ? item.deviationAmount / item.allowDeviation : 99;
+  if (ratio > 1.5) return "severe";
+  if (ratio > 0.5) return "medium";
+  return "mild";
+}
+
+function WorkerAvatar({
+  worker,
+  size = "md",
+}: {
+  worker?: Pick<Worker, "name" | "color"> | null;
+  size?: "sm" | "md" | "lg";
+}) {
   const sizes = {
     sm: "h-8 w-8 text-body-md",
     md: "h-12 w-12 text-body-lg",
@@ -48,20 +86,23 @@ export default function ReworkPage() {
   const submitReworkRecheck = useAppStore((s) => s.submitReworkRecheck);
   const addWorker = useAppStore((s) => s.addWorker);
 
-  const [filter, setFilter] = useState<ReworkStatus | "all">("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("todo");
+  const [groupBy, setGroupBy] = useState<GroupBy>("worker");
+  const [listFilter, setListFilter] = useState<ReworkStatus | "all">("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [recheckingId, setRecheckingId] = useState<string | null>(null);
-  const [recheckValue, setRecheckValue] = useState<string>("");
+  const [recheckValue, setRecheckValue] = useState("");
   const [recheckPhoto, setRecheckPhoto] = useState<string | null>(null);
   const [workerSelectId, setWorkerSelectId] = useState<string | null>(null);
   const [newWorkerName, setNewWorkerName] = useState("");
   const [showAddWorker, setShowAddWorker] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  const filtered = useMemo(() => {
-    if (filter === "all") return reworks;
-    return reworks.filter((r) => r.status === filter);
-  }, [reworks, filter]);
+  const pendingReworks = useMemo(
+    () => reworks.filter((r) => r.status !== "passed"),
+    [reworks],
+  );
 
   const pendingCount = reworks.filter((r) => r.status === "pending").length;
   const recheckCount = reworks.filter((r) => r.status === "rechecking").length;
@@ -72,7 +113,17 @@ export default function ReworkPage() {
     setTimeout(() => setToastMsg(null), 2200);
   };
 
-  const toggleExpand = (id: string) => setExpandedId((cur) => (cur === id ? null : id));
+  const toggleExpand = (id: string) =>
+    setExpandedId((cur) => (cur === id ? null : id));
+
+  const toggleGroup = (key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const handleAssignWorker = (reworkId: string, worker: Worker) => {
     assignReworkWorker(reworkId, worker.id, worker.name);
@@ -111,7 +162,15 @@ export default function ReworkPage() {
   const handleAddWorker = () => {
     const name = newWorkerName.trim();
     if (!name) return;
-    const colors = ["#FF6B1A", "#27AE60", "#3498DB", "#9B59B6", "#F39C12", "#E91E63"];
+    const colors = [
+      "#FF6B1A",
+      "#27AE60",
+      "#3498DB",
+      "#9B59B6",
+      "#F39C12",
+      "#E91E63",
+      "#1ABC9C",
+    ];
     addWorker({
       name,
       skills: ["plastering", "tiling", "flooring", "masonry"],
@@ -122,14 +181,280 @@ export default function ReworkPage() {
     showToast(`工人「${name}」已添加`);
   };
 
+  const groupedData = useMemo(() => {
+    const groups = new Map<string, { key: string; title: string; subtitle?: string; items: ReworkItem[]; icon?: React.ReactNode }>();
+
+    pendingReworks.forEach((item) => {
+      let key = "";
+      let title = "";
+      let subtitle = "";
+      let icon: React.ReactNode = null;
+
+      if (groupBy === "worker") {
+        const w = workers.find((x) => x.id === item.assignedWorkerId);
+        key = item.assignedWorkerId ?? "unassigned";
+        title = w?.name ?? "未指派工人";
+        subtitle = w ? "" : "请尽快指派";
+        icon = <WorkerAvatar worker={w} size="sm" />;
+      } else if (groupBy === "process") {
+        key = item.processType;
+        title = item.processName;
+        subtitle = `${pendingReworks.filter((x) => x.processType === item.processType).length} 项待处理`;
+      } else {
+        const sev = getSeverity(item);
+        const cfg = SEVERITY_LABEL[sev];
+        key = sev;
+        title = cfg.label + "超差";
+        icon = <span className={cfg.color}>{cfg.icon}</span>;
+      }
+
+      if (!groups.has(key)) {
+        groups.set(key, { key, title, subtitle, items: [], icon });
+      }
+      groups.get(key)!.items.push(item);
+    });
+
+    // 每组内部按严重程度排序
+    groups.forEach((g) => {
+      g.items.sort((a, b) => {
+        const sevOrder = { severe: 0, medium: 1, mild: 2 };
+        return sevOrder[getSeverity(a)] - sevOrder[getSeverity(b)];
+      });
+    });
+
+    // 分组顺序
+    const sorted = Array.from(groups.values());
+    if (groupBy === "severity") {
+      const sevOrder = { severe: 0, medium: 1, mild: 2 };
+      sorted.sort((a, b) => sevOrder[a.key as SeverityLevel] - sevOrder[b.key as SeverityLevel]);
+    } else {
+      sorted.sort((a, b) => b.items.length - a.items.length);
+    }
+    return sorted;
+  }, [pendingReworks, groupBy, workers]);
+
   const activeItem = reworks.find((r) => r.id === recheckingId);
+
+  const renderReworkCard = (item: ReworkItem, compact = false) => {
+    const assignedWorker = item.assignedWorkerId
+      ? workers.find((w) => w.id === item.assignedWorkerId)
+      : null;
+    const expanded = expandedId === item.id;
+    const sev = getSeverity(item);
+    const sevCfg = SEVERITY_LABEL[sev];
+
+    return (
+      <div
+        key={item.id}
+        className={`card overflow-hidden border-l-[6px] ${
+          item.status === "passed"
+            ? "border-l-site-pass"
+            : item.status === "rechecking"
+            ? "border-l-site-warn"
+            : sev === "severe"
+            ? "border-l-site-fail"
+            : sev === "medium"
+            ? "border-l-site-warn"
+            : "border-l-site-pass"
+        }`}
+      >
+        <div className={`flex items-start gap-3 ${compact ? "p-3" : "p-4"}`}>
+          <div className="mt-0.5 shrink-0">
+            <WorkerAvatar worker={assignedWorker} size={compact ? "sm" : "md"} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="mb-1 flex items-start justify-between gap-2">
+              <h3 className={`font-bold text-site-dark ${compact ? "text-body-lg" : "text-title-md"}`}>
+                {item.itemName}
+              </h3>
+              <StatusBadge
+                type={
+                  item.status === "passed"
+                    ? "done"
+                    : item.status === "rechecking"
+                    ? "rechecking"
+                    : "pending"
+                }
+              />
+            </div>
+            <p className={`mb-2 font-medium text-site-darkLight ${compact ? "text-sm" : "text-body-md"}`}>
+              {item.processName} · {item.date}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-site-failBg px-3 py-1 text-body-md font-bold text-site-fail">
+                原值 {item.originalValue}
+                {item.unit}
+              </span>
+              <span className={`rounded-full px-3 py-1 text-body-md font-bold ${sevCfg.bg} ${sevCfg.color}`}>
+                超差 {item.deviationAmount.toFixed(1)}
+                {item.unit}
+              </span>
+            </div>
+            {!compact && (
+              <div className="mt-3 flex items-center gap-2">
+                <Users size={16} className="text-site-darkLight" strokeWidth={2} />
+                <span className="text-body-md font-medium text-site-dark">
+                  {assignedWorker ? (
+                    <>
+                      <span className="text-site-orange font-bold">{assignedWorker.name}</span> 负责整改
+                    </>
+                  ) : (
+                    <span className="text-site-fail font-semibold">尚未指派工人</span>
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {!compact && (
+          <button
+            onClick={() => toggleExpand(item.id)}
+            className="flex w-full items-center justify-center gap-1 border-t border-site-border bg-gray-50/60 py-3 text-body-md font-semibold text-site-darkLight"
+          >
+            {expanded ? (
+              <>
+                <ChevronUp size={18} strokeWidth={2.5} /> 收起详情
+              </>
+            ) : (
+              <>
+                <ChevronDown size={18} strokeWidth={2.5} /> 展开详情 / 操作
+              </>
+            )}
+          </button>
+        )}
+
+        {expanded && !compact && (
+          <div className="space-y-4 border-t border-site-border bg-white p-4">
+            {item.photo && (
+              <div>
+                <p className="mb-2 text-body-md font-semibold text-site-dark">问题现场图</p>
+                <img
+                  src={item.photo}
+                  alt="问题照片"
+                  className="h-44 w-full rounded-btn object-cover border border-site-border"
+                />
+              </div>
+            )}
+
+            {item.status === "pending" && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-body-lg font-semibold text-site-dark">整改工人</p>
+                  <button
+                    onClick={() => setShowAddWorker((s) => !s)}
+                    className="flex items-center gap-1 text-body-md font-semibold text-site-orange"
+                  >
+                    <UserPlus size={18} strokeWidth={2.5} /> 添加工人
+                  </button>
+                </div>
+
+                {showAddWorker && (
+                  <div className="flex gap-2 rounded-btn bg-gray-50 p-3">
+                    <input
+                      type="text"
+                      value={newWorkerName}
+                      onChange={(e) => setNewWorkerName(e.target.value)}
+                      placeholder="输入工人姓名"
+                      className="h-12 flex-1 rounded-btn border border-site-border bg-white px-4 text-body-lg outline-none focus:border-site-orange"
+                    />
+                    <button
+                      onClick={handleAddWorker}
+                      className="h-12 rounded-btn bg-site-orange px-5 text-btn-lg font-semibold text-white"
+                    >
+                      确认
+                    </button>
+                  </div>
+                )}
+
+                {workerSelectId === item.id ? (
+                  <div className="grid grid-cols-3 gap-2 rounded-btn bg-gray-50 p-3">
+                    {workers.map((w) => {
+                      const isMatch = w.skills.includes(item.processType);
+                      return (
+                        <button
+                          key={w.id}
+                          onClick={() => handleAssignWorker(item.id, w)}
+                          className={`flex flex-col items-center gap-1.5 rounded-btn border-2 bg-white p-3 transition-all active:scale-95 ${
+                            isMatch ? "border-site-orange/60" : "border-site-border opacity-60"
+                          }`}
+                        >
+                          <WorkerAvatar worker={w} size="sm" />
+                          <span className="text-body-md font-semibold text-site-dark truncate w-full text-center">
+                            {w.name}
+                          </span>
+                          {isMatch && (
+                            <span className="rounded-full bg-site-orange/10 px-2 py-0.5 text-xs font-bold text-site-orange">
+                              擅长
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    <button
+                      onClick={() => setWorkerSelectId(null)}
+                      className="col-span-3 mt-1 h-12 rounded-btn border border-site-border text-body-md font-semibold text-site-darkLight"
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setWorkerSelectId(item.id)}
+                    className="btn-secondary flex items-center justify-center gap-2"
+                  >
+                    <Users size={20} strokeWidth={2.5} />
+                    {assignedWorker ? "更换工人" : "指派工人 →"}
+                  </button>
+                )}
+
+                <button
+                  onClick={() => handleMarkRechecking(item.id)}
+                  disabled={!assignedWorker}
+                  className={`btn-success flex items-center justify-center gap-2 ${
+                    !assignedWorker ? "!bg-gray-300" : ""
+                  }`}
+                >
+                  <RefreshCw size={22} strokeWidth={2.5} />
+                  工人已整改，申请复测
+                </button>
+              </div>
+            )}
+
+            {(item.status === "rechecking" || item.status === "pending") && (
+              <button
+                onClick={() => handleStartRecheck(item)}
+                className="btn-primary flex items-center justify-center gap-2"
+              >
+                <Camera size={22} strokeWidth={2.5} />
+                现在去复测
+              </button>
+            )}
+
+            {item.status === "passed" && item.recheckDate && (
+              <div className="rounded-btn bg-site-passBg p-4">
+                <div className="flex items-center gap-2 text-site-pass">
+                  <CheckCircle2 size={22} strokeWidth={2.5} />
+                  <span className="text-body-lg font-bold">复测合格，已关闭</span>
+                </div>
+                <p className="mt-2 text-body-md text-site-darkLight">
+                  复测值：<b className="text-site-pass">{item.recheckValue}{item.unit}</b>
+                  {" · "}日期：{item.recheckDate}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="mx-auto max-w-2xl px-4 pt-6 pb-safe-bottom">
       <header className="mb-4">
         <h1 className="text-title-lg text-site-dark">返工清单</h1>
         <p className="mt-1 text-body-md text-site-darkLight">
-          每日按清单追踪整改，复测合格后关闭
+          按清单追踪整改，复测合格后关闭
         </p>
       </header>
 
@@ -148,228 +473,146 @@ export default function ReworkPage() {
         </div>
       </div>
 
-      <div className="mb-5 flex rounded-btn border-2 border-site-border bg-white p-1">
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className={`segment-item rounded-lg transition-all ${
-              filter === f.key
-                ? "bg-site-orange text-white shadow-md"
-                : "text-site-darkLight"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+      <div className="mb-4 flex rounded-btn border-2 border-site-border bg-white p-1">
+        <button
+          onClick={() => setViewMode("todo")}
+          className={`segment-item flex items-center justify-center gap-1.5 rounded-lg ${
+            viewMode === "todo" ? "bg-site-orange text-white shadow-md" : "text-site-darkLight"
+          }`}
+        >
+          <ListTodo size={18} strokeWidth={2.5} />
+          明日待办
+        </button>
+        <button
+          onClick={() => setViewMode("list")}
+          className={`segment-item flex items-center justify-center gap-1.5 rounded-lg ${
+            viewMode === "list" ? "bg-site-orange text-white shadow-md" : "text-site-darkLight"
+          }`}
+        >
+          <List size={18} strokeWidth={2.5} />
+          全部列表
+        </button>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="card flex flex-col items-center justify-center gap-3 py-20">
-          <CheckCircle2 size={64} className="text-site-pass" strokeWidth={2} />
-          <p className="text-title-md font-bold text-site-dark">没有待处理项</p>
-          <p className="text-body-md text-site-darkLight">全部整改合格，做得不错！</p>
+      {viewMode === "list" && (
+        <div className="mb-4 flex rounded-btn border-2 border-site-border bg-white p-1">
+          {[
+            { key: "all" as const, label: "全部" },
+            { key: "pending" as const, label: "待返工" },
+            { key: "rechecking" as const, label: "待复测" },
+            { key: "passed" as const, label: "已合格" },
+          ].map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setListFilter(f.key)}
+              className={`segment-item rounded-lg ${
+                listFilter === f.key ? "bg-site-dark text-white" : "text-site-darkLight"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
         </div>
+      )}
+
+      {viewMode === "todo" && (
+        <div className="mb-4 flex rounded-btn border-2 border-site-border bg-white p-1">
+          {[
+            { key: "worker" as const, label: "按工人", icon: <Users size={16} strokeWidth={2} /> },
+            { key: "process" as const, label: "按工序", icon: <Clock size={16} strokeWidth={2} /> },
+            { key: "severity" as const, label: "按严重度", icon: <AlertTriangle size={16} strokeWidth={2} /> },
+          ].map((g) => (
+            <button
+              key={g.key}
+              onClick={() => setGroupBy(g.key)}
+              className={`segment-item flex items-center justify-center gap-1 rounded-lg ${
+                groupBy === g.key ? "bg-site-dark text-white" : "text-site-darkLight"
+              }`}
+            >
+              {g.icon}
+              {g.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {viewMode === "todo" ? (
+        <>
+          {pendingReworks.length === 0 ? (
+            <div className="card flex flex-col items-center justify-center gap-3 py-20">
+              <CheckCircle2 size={64} className="text-site-pass" strokeWidth={2} />
+              <p className="text-title-md font-bold text-site-dark">没有待处理项</p>
+              <p className="text-body-md text-site-darkLight">全部整改合格，做得不错！</p>
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {groupedData.map((g) => {
+                const collapsed = collapsedGroups.has(g.key);
+                return (
+                  <div key={g.key} className="card overflow-hidden">
+                    <button
+                      onClick={() => toggleGroup(g.key)}
+                      className="flex w-full items-center gap-3 border-b border-site-border bg-gray-50/80 px-4 py-4 text-left"
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white shadow-sm">
+                        {g.icon ?? <ListTodo size={20} className="text-site-orange" strokeWidth={2.5} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-title-md font-bold text-site-dark">{g.title}</h3>
+                        {g.subtitle && (
+                          <p className="text-body-md font-medium text-site-darkLight">
+                            {g.subtitle}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-site-orange px-3 py-1 text-body-md font-bold text-white">
+                          {g.items.length} 项
+                        </span>
+                        {collapsed ? (
+                          <ChevronDown size={22} strokeWidth={2.5} className="text-site-darkLight" />
+                        ) : (
+                          <ChevronUp size={22} strokeWidth={2.5} className="text-site-darkLight" />
+                        )}
+                      </div>
+                    </button>
+
+                    {!collapsed && (
+                      <div className="divide-y divide-site-border/60 bg-white">
+                        {g.items.map((item) => (
+                          <div key={item.id} onClick={() => toggleExpand(item.id)} className="cursor-pointer">
+                            {renderReworkCard(item, true)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="pt-2 text-center text-body-md text-site-darkLight">
+                💡 点卡片展开可复测、换工人
+              </p>
+            </div>
+          )}
+        </>
       ) : (
         <div className="space-y-4">
-          {filtered.map((item) => {
-            const assignedWorker = item.assignedWorkerId
-              ? workers.find((w) => w.id === item.assignedWorkerId)
-              : null;
-            const expanded = expandedId === item.id;
-            const process = getProcessByType(item.processType);
-
-            return (
-              <div
-                key={item.id}
-                className={`card overflow-hidden border-l-[6px] ${
-                  item.status === "passed"
-                    ? "border-l-site-pass"
-                    : item.status === "rechecking"
-                    ? "border-l-site-warn"
-                    : "border-l-site-fail"
-                }`}
-              >
-                <div className="flex items-start gap-3 p-4">
-                  <div className="mt-0.5 shrink-0">
-                    <WorkerAvatar worker={assignedWorker} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex items-start justify-between gap-2">
-                      <h3 className="text-title-md font-bold text-site-dark truncate">
-                        {item.itemName}
-                      </h3>
-                      <StatusBadge
-                        type={
-                          item.status === "passed"
-                            ? "done"
-                            : item.status === "rechecking"
-                            ? "rechecking"
-                            : "pending"
-                        }
-                      />
-                    </div>
-                    <p className="mb-2 text-body-md font-medium text-site-darkLight">
-                      {item.processName} · {item.date}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-site-failBg px-3 py-1 text-body-md font-bold text-site-fail">
-                        原值 {item.originalValue}
-                        {item.unit}
-                      </span>
-                      <span className="rounded-full bg-gray-100 px-3 py-1 text-body-md font-medium text-site-darkLight">
-                        允许 ±{item.allowDeviation}
-                        {item.unit}
-                      </span>
-                      {item.deviationAmount > 0 && (
-                        <span className="rounded-full bg-site-warnBg px-3 py-1 text-body-md font-bold text-site-warn">
-                          超差 +{item.deviationAmount.toFixed(1)}
-                          {item.unit}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-3 flex items-center gap-2">
-                      <Users size={16} className="text-site-darkLight" strokeWidth={2} />
-                      <span className="text-body-md font-medium text-site-dark">
-                        {assignedWorker ? `${assignedWorker.name} 负责` : "尚未指派工人"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => toggleExpand(item.id)}
-                  className="flex w-full items-center justify-center gap-1 border-t border-site-border bg-gray-50/60 py-3 text-body-md font-semibold text-site-darkLight"
-                >
-                  {expanded ? (
-                    <>
-                      <ChevronUp size={18} strokeWidth={2.5} /> 收起详情
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown size={18} strokeWidth={2.5} /> 展开详情 / 操作
-                    </>
-                  )}
-                </button>
-
-                {expanded && (
-                  <div className="space-y-4 border-t border-site-border bg-white p-4">
-                    {item.photo && (
-                      <div>
-                        <p className="mb-2 text-body-md font-semibold text-site-dark">问题现场图</p>
-                        <img
-                          src={item.photo}
-                          alt="问题照片"
-                          className="h-44 w-full rounded-btn object-cover border border-site-border"
-                        />
-                      </div>
-                    )}
-
-                    {item.status === "pending" && (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <p className="text-body-lg font-semibold text-site-dark">
-                            指定整改工人
-                          </p>
-                          <button
-                            onClick={() => setShowAddWorker((s) => !s)}
-                            className="flex items-center gap-1 text-body-md font-semibold text-site-orange"
-                          >
-                            <UserPlus size={18} strokeWidth={2.5} /> 添加
-                          </button>
-                        </div>
-
-                        {showAddWorker && (
-                          <div className="flex gap-2 rounded-btn bg-gray-50 p-3">
-                            <input
-                              type="text"
-                              value={newWorkerName}
-                              onChange={(e) => setNewWorkerName(e.target.value)}
-                              placeholder="输入工人姓名"
-                              className="h-12 flex-1 rounded-btn border border-site-border bg-white px-4 text-body-lg outline-none focus:border-site-orange"
-                            />
-                            <button
-                              onClick={handleAddWorker}
-                              className="h-12 rounded-btn bg-site-orange px-5 text-btn-lg font-semibold text-white"
-                            >
-                              确认
-                            </button>
-                          </div>
-                        )}
-
-                        {workerSelectId === item.id ? (
-                          <div className="grid grid-cols-3 gap-2 rounded-btn bg-gray-50 p-3">
-                            {workers.map((w) => (
-                              <button
-                                key={w.id}
-                                onClick={() => handleAssignWorker(item.id, w)}
-                                className="flex flex-col items-center gap-1.5 rounded-btn border border-site-border bg-white p-3 transition-all active:scale-95 active:border-site-orange"
-                              >
-                                <WorkerAvatar worker={w} size="sm" />
-                                <span className="text-body-md font-semibold text-site-dark truncate w-full text-center">
-                                  {w.name}
-                                </span>
-                              </button>
-                            ))}
-                            <button
-                              onClick={() => setWorkerSelectId(null)}
-                              className="col-span-3 mt-1 h-12 rounded-btn border border-site-border text-body-md font-semibold text-site-darkLight"
-                            >
-                              取消
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setWorkerSelectId(item.id)}
-                            disabled={!assignedWorker}
-                            className={`btn-secondary flex items-center justify-center gap-2 ${
-                              assignedWorker ? "" : "!bg-site-orange !text-white !border-site-orange"
-                            }`}
-                          >
-                            {assignedWorker ? "更换工人" : "指派工人 →"}
-                          </button>
-                        )}
-
-                        <button
-                          onClick={() => handleMarkRechecking(item.id)}
-                          disabled={!assignedWorker}
-                          className={`btn-success flex items-center justify-center gap-2 ${
-                            !assignedWorker ? "!bg-gray-300" : ""
-                          }`}
-                        >
-                          <RefreshCw size={22} strokeWidth={2.5} />
-                          工人已整改，申请复测
-                        </button>
-                      </div>
-                    )}
-
-                    {(item.status === "rechecking" || item.status === "pending") && (
-                      <button
-                        onClick={() => handleStartRecheck(item)}
-                        className="btn-primary flex items-center justify-center gap-2"
-                      >
-                        <Camera size={22} strokeWidth={2.5} />
-                        现在去复测
-                      </button>
-                    )}
-
-                    {item.status === "passed" && item.recheckDate && (
-                      <div className="rounded-btn bg-site-passBg p-4">
-                        <div className="flex items-center gap-2 text-site-pass">
-                          <CheckCircle2 size={22} strokeWidth={2.5} />
-                          <span className="text-body-lg font-bold">复测合格，已关闭</span>
-                        </div>
-                        <p className="mt-2 text-body-md text-site-darkLight">
-                          复测值：<b className="text-site-pass">{item.recheckValue}{item.unit}</b>
-                          {" · "}日期：{item.recheckDate}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {(listFilter === "all"
+            ? reworks
+            : reworks.filter((r) => r.status === listFilter)
+          ).length === 0 ? (
+            <div className="card flex flex-col items-center justify-center gap-3 py-20">
+              <ListTodo size={64} className="text-site-darkLight" strokeWidth={1.5} />
+              <p className="text-title-md font-bold text-site-dark">暂无记录</p>
+              <p className="text-body-md text-site-darkLight">
+                去「今日自检」录入数据后会自动生成
+              </p>
+            </div>
+          ) : (
+            (listFilter === "all" ? reworks : reworks.filter((r) => r.status === listFilter)).map(
+              (item) => renderReworkCard(item),
+            )
+          )}
         </div>
       )}
 
@@ -377,7 +620,9 @@ export default function ReworkPage() {
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center">
           <div className="w-full max-w-2xl rounded-t-3xl bg-site-bg p-5 pb-safe-bottom animate-[slideUp_.25s_ease] sm:rounded-3xl sm:p-6">
             <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-title-md font-bold text-site-dark">复测：{activeItem.itemName}</h2>
+              <h2 className="text-title-md font-bold text-site-dark">
+                复测：{activeItem.itemName}
+              </h2>
               <button
                 onClick={handleCancelRecheck}
                 className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-card text-site-darkLight"

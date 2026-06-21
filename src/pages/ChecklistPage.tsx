@@ -1,9 +1,13 @@
 import { useMemo, useState } from "react";
 import {
+  AlertCircle,
   ArrowLeft,
+  Camera,
   CheckCircle2,
   Circle,
+  CircleDot,
   Info,
+  ListChecks,
   Send,
   Wrench,
   Hammer,
@@ -37,9 +41,20 @@ function initRecords(processType: ProcessType): MeasurementRecord[] {
     standardValue: item.standardValue,
     allowDeviation: item.allowDeviation,
     photo: null,
-    repairedOnSite: false,
+    repairedOnSite: null,
     isPass: null,
   }));
+}
+
+type CompletionStatus = "complete" | "incomplete" | "empty";
+
+function getCompletion(r: MeasurementRecord): CompletionStatus {
+  const hasValue = r.measuredValue != null;
+  const hasPhoto = r.photo != null;
+  const hasRepair = r.repairedOnSite != null;
+  if (hasValue && hasPhoto && hasRepair) return "complete";
+  if (!hasValue && !hasPhoto && !hasRepair) return "empty";
+  return "incomplete";
 }
 
 export default function ChecklistPage() {
@@ -67,7 +82,22 @@ export default function ChecklistPage() {
     [records],
   );
 
-  const canSubmit = computedRecords.every((r) => r.measuredValue != null);
+  const completeCount = computedRecords.filter(
+    (r) => getCompletion(r) === "complete",
+  ).length;
+  const canSubmit = completeCount === computedRecords.length;
+
+  const missingList = useMemo(() => {
+    return computedRecords
+      .map((r, i) => {
+        const miss: string[] = [];
+        if (r.measuredValue == null) miss.push("测量值");
+        if (r.photo == null) miss.push("现场照片");
+        if (r.repairedOnSite == null) miss.push("修补状态");
+        return { idx: i + 1, name: r.itemName, miss };
+      })
+      .filter((x) => x.miss.length > 0);
+  }, [computedRecords]);
 
   const handleSelectProcess = (type: ProcessType) => {
     setProcessType(type);
@@ -91,6 +121,7 @@ export default function ChecklistPage() {
     if (!processType || !canSubmit) return;
     const enriched = computedRecords.map((r) => ({
       ...r,
+      repairedOnSite: r.repairedOnSite ?? false,
       isPass: r.measuredValue != null
         ? calcIsPass(r.measuredValue, r.standardValue, r.allowDeviation)
         : false,
@@ -220,30 +251,91 @@ export default function ChecklistPage() {
         </button>
         <div className="flex-1">
           <h1 className="text-title-md text-site-dark">{process?.name} · 自检</h1>
-          <p className="text-body-md text-site-darkLight">{process?.items.length} 项必须检测</p>
+          <p className="text-body-md text-site-darkLight">
+            共 {computedRecords.length} 项 · 已完成 {completeCount} 项
+          </p>
+        </div>
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-site-passBg text-site-pass">
+          <ListChecks size={22} strokeWidth={2.5} />
         </div>
       </header>
+
+      {!canSubmit && (
+        <div className="mb-4 rounded-btn border-2 border-site-warn/40 bg-site-warnBg p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={24} className="mt-0.5 shrink-0 text-site-warn" strokeWidth={2.5} />
+            <div className="flex-1">
+              <p className="text-body-lg font-bold text-site-dark">还需补齐以下内容</p>
+              <ul className="mt-2 space-y-1.5">
+                {missingList.slice(0, 3).map((m) => (
+                  <li key={m.idx} className="text-body-md font-medium text-site-darkLight">
+                    <span className="font-bold text-site-warn">第{m.idx}项</span> {m.name}：
+                    <span className="text-site-fail"> 缺{m.miss.join("、")}</span>
+                  </li>
+                ))}
+                {missingList.length > 3 && (
+                  <li className="text-body-md font-medium text-site-darkLight">
+                    …还有 {missingList.length - 3} 项未完成
+                  </li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-5">
         {computedRecords.map((rec, idx) => {
           const item = process!.items[idx];
+          const status = getCompletion(rec);
           const rangeLabel =
             item.standardValue === 0
               ? `偏差允许 ±${item.allowDeviation}${item.unit}`
               : `标准 ${item.standardValue}${item.unit}，允许 ±${item.allowDeviation}${item.unit}`;
 
+          const borderClass =
+            status === "complete"
+              ? "border-l-[6px] border-l-site-pass"
+              : status === "incomplete"
+              ? "border-l-[6px] border-l-site-warn"
+              : "border-l-[6px] border-l-gray-300";
+
           return (
-            <div key={rec.id} className="card overflow-hidden">
+            <div key={rec.id} className={`card overflow-hidden ${borderClass}`}>
               <div className="border-b border-site-border bg-gray-50/80 px-5 py-4">
-                <div className="mb-1 flex items-start justify-between gap-2">
+                <div className="mb-1.5 flex items-start justify-between gap-2">
                   <h3 className="text-title-md font-bold text-site-dark">
                     {idx + 1}. {rec.itemName}
                   </h3>
-                  {rec.isPass != null && (
+                  {status === "complete" ? (
                     <StatusBadge type={rec.isPass ? "pass" : "fail"} />
+                  ) : (
+                    <div className="flex items-center gap-1 rounded-full bg-site-warnBg px-3 py-1 font-semibold text-site-warn">
+                      <CircleDot size={16} strokeWidth={2.5} />
+                      待补齐
+                    </div>
                   )}
                 </div>
                 <p className="text-body-md font-medium text-site-warn">⚠ {rangeLabel}</p>
+                {status !== "complete" && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {rec.measuredValue == null && (
+                      <span className="rounded-md bg-site-fail/10 px-2 py-0.5 text-xs font-bold text-site-fail">
+                        缺测量值
+                      </span>
+                    )}
+                    {rec.photo == null && (
+                      <span className="rounded-md bg-site-fail/10 px-2 py-0.5 text-xs font-bold text-site-fail">
+                        缺照片
+                      </span>
+                    )}
+                    {rec.repairedOnSite == null && (
+                      <span className="rounded-md bg-site-fail/10 px-2 py-0.5 text-xs font-bold text-site-fail">
+                        缺修补状态
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4 p-5">
@@ -261,8 +353,11 @@ export default function ChecklistPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-body-lg font-semibold text-site-dark">
+                  <label className="mb-2 flex items-center gap-2 text-body-lg font-semibold text-site-dark">
                     测量数值（{rec.unit}）
+                    {rec.measuredValue == null && (
+                      <span className="text-xs font-bold text-site-fail">*必填</span>
+                    )}
                   </label>
                   <div className="flex items-center gap-3">
                     <input
@@ -295,21 +390,36 @@ export default function ChecklistPage() {
                   )}
                 </div>
 
-                <PhotoInput
-                  value={rec.photo}
-                  onChange={(v) => updateRecord(rec.id, { photo: v })}
-                />
+                <div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <Camera size={20} className="text-site-orange" strokeWidth={2} />
+                    <p className="text-body-lg font-semibold text-site-dark">现场照片</p>
+                    {rec.photo == null && (
+                      <span className="text-xs font-bold text-site-fail">*必拍</span>
+                    )}
+                  </div>
+                  <PhotoInput
+                    value={rec.photo}
+                    onChange={(v) => updateRecord(rec.id, { photo: v })}
+                  />
+                </div>
 
                 <div>
-                  <p className="mb-2 text-body-lg font-semibold text-site-dark">
-                    是否当场修补？
-                  </p>
+                  <div className="mb-2 flex items-center gap-2">
+                    <CheckCircle2 size={20} className="text-site-orange" strokeWidth={2} />
+                    <p className="text-body-lg font-semibold text-site-dark">
+                      是否当场修补？
+                    </p>
+                    {rec.repairedOnSite == null && (
+                      <span className="text-xs font-bold text-site-fail">*必选</span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
                       onClick={() => updateRecord(rec.id, { repairedOnSite: true })}
                       className={`flex h-14 items-center justify-center gap-2 rounded-btn border-2 font-semibold text-btn-lg transition-all ${
-                        rec.repairedOnSite
+                        rec.repairedOnSite === true
                           ? "border-site-pass bg-site-passBg text-site-pass"
                           : "border-site-border text-site-darkLight"
                       }`}
@@ -321,7 +431,7 @@ export default function ChecklistPage() {
                       type="button"
                       onClick={() => updateRecord(rec.id, { repairedOnSite: false })}
                       className={`flex h-14 items-center justify-center gap-2 rounded-btn border-2 font-semibold text-btn-lg transition-all ${
-                        !rec.repairedOnSite
+                        rec.repairedOnSite === false
                           ? "border-site-fail bg-site-failBg text-site-fail"
                           : "border-site-border text-site-darkLight"
                       }`}
@@ -344,7 +454,9 @@ export default function ChecklistPage() {
           }`}
         >
           <Send size={22} strokeWidth={2.5} />
-          {canSubmit ? "提交自检" : "请完成所有测量"}
+          {canSubmit
+            ? "提交自检"
+            : `还缺 ${missingList.length} 项，补齐后提交`}
         </button>
       </div>
     </div>

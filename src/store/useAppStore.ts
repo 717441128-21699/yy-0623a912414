@@ -79,6 +79,10 @@ export const useAppStore = create<AppStore>()(
           createdAt: Date.now(),
         };
 
+        const workers = get().workers;
+        const matchedWorkers = workers.filter((w) => w.skills.includes(processType));
+        const suggestedWorker = matchedWorkers[0] ?? null;
+
         const newReworks: ReworkItem[] = enrichedMeasurements
           .filter((m) => m.isPass === false)
           .map((m) => {
@@ -98,8 +102,8 @@ export const useAppStore = create<AppStore>()(
               allowDeviation: m.allowDeviation,
               deviationAmount: devAmount,
               photo: m.photo,
-              assignedWorkerId: null,
-              assignedWorkerName: null,
+              assignedWorkerId: suggestedWorker?.id ?? null,
+              assignedWorkerName: suggestedWorker?.name ?? null,
               status: "pending",
               recheckValue: null,
               recheckPhoto: null,

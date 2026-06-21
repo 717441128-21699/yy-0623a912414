@@ -43,7 +43,7 @@ export interface MeasurementRecord {
   standardValue: number;
   allowDeviation: number;
   photo: string | null;
-  repairedOnSite: boolean;
+  repairedOnSite: boolean | null;
   isPass: boolean | null;
 }
 
