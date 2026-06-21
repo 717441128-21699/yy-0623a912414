@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  background-color: #f8f5f0;
+  color: #2c3e50;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+@layer components {
+  .btn-primary {
+    @apply h-14 w-full rounded-btn bg-site-orange text-btn-lg text-white shadow-btn transition-all active:scale-[0.98] active:bg-site-orangeDark;
+  }
+
+  .btn-secondary {
+    @apply h-14 w-full rounded-btn border-2 border-site-orange text-btn-lg text-site-orange transition-all active:scale-[0.98] active:bg-site-orange/10;
+  }
+
+  .btn-success {
+    @apply h-14 w-full rounded-btn bg-site-pass text-btn-lg text-white transition-all active:scale-[0.98];
+  }
+
+  .card {
+    @apply rounded-card bg-site-card shadow-card;
+  }
+
+  .input-num {
+    @apply h-14 w-full rounded-btn border-2 border-site-border bg-white px-4 text-title-md font-bold text-site-dark outline-none transition-colors focus:border-site-orange;
+  }
+
+  .segment-item {
+    @apply flex-1 py-3 text-center text-body-md font-semibold transition-all;
+  }
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
