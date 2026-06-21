@@ -59,6 +59,14 @@ export interface DailyInspection {
 
 export type ReworkStatus = "pending" | "rechecking" | "passed";
 
+export interface NotificationRecord {
+  id: string;
+  time: string;
+  workerId: string;
+  workerName: string;
+  remark: string;
+}
+
 export interface ReworkItem {
   id: string;
   sourceRecordId: string;
@@ -78,6 +86,7 @@ export interface ReworkItem {
   recheckValue: number | null;
   recheckPhoto: string | null;
   recheckDate: string | null;
+  notifications: NotificationRecord[];
 }
 
 export interface Worker {

@@ -4,6 +4,7 @@ import type {
   AppState,
   DailyInspection,
   MeasurementRecord,
+  NotificationRecord,
   ProcessType,
   ReworkItem,
   ReworkStatus,
@@ -26,6 +27,11 @@ function todayStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function nowTimeStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 interface AppStore extends AppState {
   setTeamLeader: (name: string) => void;
   addWorker: (worker: Omit<Worker, "id">) => void;
@@ -39,8 +45,14 @@ interface AppStore extends AppState {
     reworkId: string,
     recheckValue: number,
     recheckPhoto: string | null,
-  ) => { passed: boolean };
+  ) => { passed: boolean; assignedWorkerId: string | null };
   addReworkManually: (rework: Omit<ReworkItem, "id">) => void;
+  addNotification: (
+    reworkId: string,
+    workerId: string,
+    workerName: string,
+    remark: string,
+  ) => void;
 }
 
 export const useAppStore = create<AppStore>()(
@@ -108,6 +120,7 @@ export const useAppStore = create<AppStore>()(
               recheckValue: null,
               recheckPhoto: null,
               recheckDate: null,
+              notifications: [],
             } satisfies ReworkItem;
           });
 
@@ -135,7 +148,7 @@ export const useAppStore = create<AppStore>()(
 
       submitReworkRecheck: (reworkId, recheckValue, recheckPhoto) => {
         const rework = get().reworks.find((r) => r.id === reworkId);
-        if (!rework) return { passed: false };
+        if (!rework) return { passed: false, assignedWorkerId: null };
 
         const passed = calcIsPass(recheckValue, rework.standardValue, rework.allowDeviation);
         const newStatus: ReworkStatus = passed ? "passed" : "pending";
@@ -154,13 +167,30 @@ export const useAppStore = create<AppStore>()(
           ),
         }));
 
-        return { passed };
+        return { passed, assignedWorkerId: rework.assignedWorkerId };
       },
 
       addReworkManually: (rework) =>
         set((s) => ({
-          reworks: [{ ...rework, id: generateId() }, ...s.reworks],
+          reworks: [{ ...rework, id: generateId(), notifications: rework.notifications ?? [] }, ...s.reworks],
         })),
+
+      addNotification: (reworkId, workerId, workerName, remark) => {
+        const notification: NotificationRecord = {
+          id: generateId(),
+          time: nowTimeStr(),
+          workerId,
+          workerName,
+          remark,
+        };
+        set((s) => ({
+          reworks: s.reworks.map((r) =>
+            r.id === reworkId
+              ? { ...r, notifications: [...r.notifications, notification] }
+              : r,
+          ),
+        }));
+      },
     }),
     {
       name: "qc-checklist-store",

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import {
+  Bell,
   Calendar,
   CheckCircle2,
   ChevronLeft,
@@ -12,9 +13,11 @@ import {
   ArrowRight,
   BadgeCheck,
   RefreshCcwDot,
+  CameraOff,
+  Camera,
 } from "lucide-react";
 import { useAppStore } from "@/store/useAppStore";
-import type { Worker } from "@/types";
+import type { NotificationRecord, Worker } from "@/types";
 import StatusBadge from "@/components/StatusBadge";
 
 type RecordSource = "inspection" | "rework";
@@ -40,6 +43,7 @@ interface PassedRecordItem {
   assignedWorkerName?: string | null;
   assignedWorker?: Worker | null;
   deviationAmount?: number;
+  notifications?: NotificationRecord[];
 }
 
 function formatDateCN(dateStr: string): string {
@@ -144,7 +148,7 @@ export default function RecordsPage() {
           measuredValue: r.recheckValue,
           standardValue: r.standardValue,
           allowDeviation: r.allowDeviation,
-          photo: r.recheckPhoto ?? r.photo,
+          photo: r.photo,
           repairedOnSite: true,
           originalValue: r.originalValue,
           recheckValue: r.recheckValue,
@@ -153,6 +157,7 @@ export default function RecordsPage() {
           assignedWorkerName: r.assignedWorkerName,
           assignedWorker: w,
           deviationAmount: r.deviationAmount,
+          notifications: r.notifications,
         });
       }
     });
@@ -491,18 +496,19 @@ export default function RecordsPage() {
                 </div>
               )}
 
-              <div>
-                <h4 className="mb-3 text-body-lg font-bold text-site-dark flex items-center gap-2">
-                  <ImageIcon size={20} strokeWidth={2} className="text-site-orange" />
-                  现场照片
-                </h4>
-                {detailItem.source === "rework" && detailItem.recheckPhoto ? (
+              {detailItem.source === "rework" && (
+                <div>
+                  <h4 className="mb-3 text-body-lg font-bold text-site-dark flex items-center gap-2">
+                    <ImageIcon size={20} strokeWidth={2} className="text-site-orange" />
+                    整改前后照片对比
+                  </h4>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-2">
-                      <p className="text-body-md font-semibold text-site-fail text-center">
-                        整改前
+                      <p className="text-body-md font-semibold text-site-fail text-center flex items-center justify-center gap-1">
+                        <Camera size={14} strokeWidth={2} />
+                        整改前（超差时）
                       </p>
-                      <div className="overflow-hidden rounded-btn border border-site-fail/40">
+                      <div className="overflow-hidden rounded-btn border-2 border-site-fail/40">
                         {detailItem.photo ? (
                           <img
                             src={detailItem.photo}
@@ -510,26 +516,48 @@ export default function RecordsPage() {
                             className="w-full aspect-square object-cover"
                           />
                         ) : (
-                          <div className="flex aspect-square w-full items-center justify-center bg-gray-100 text-site-darkLight">
-                            无照片
+                          <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-site-failBg/40">
+                            <CameraOff size={32} className="text-site-fail/50" strokeWidth={1.5} />
+                            <span className="text-body-md font-bold text-site-fail">未留存超差照片</span>
                           </div>
                         )}
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <p className="text-body-md font-semibold text-site-pass text-center">
-                        整改后
+                      <p className="text-body-md font-semibold text-site-pass text-center flex items-center justify-center gap-1">
+                        <CheckCircle2 size={14} strokeWidth={2} />
+                        整改后（复测时）
                       </p>
-                      <div className="overflow-hidden rounded-btn border border-site-pass/40">
-                        <img
-                          src={detailItem.recheckPhoto}
-                          alt="整改后照片"
-                          className="w-full aspect-square object-cover"
-                        />
+                      <div className="overflow-hidden rounded-btn border-2 border-site-pass/40">
+                        {detailItem.recheckPhoto ? (
+                          <img
+                            src={detailItem.recheckPhoto}
+                            alt="整改后照片"
+                            className="w-full aspect-square object-cover"
+                          />
+                        ) : (
+                          <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-site-passBg/40">
+                            <CameraOff size={32} className="text-site-pass/50" strokeWidth={1.5} />
+                            <span className="text-body-md font-bold text-site-pass">未留存复测照片</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
-                ) : (
+                  {!detailItem.photo && !detailItem.recheckPhoto && (
+                    <p className="mt-2 text-center text-body-md font-semibold text-site-fail">
+                      ⚠ 两张照片均未留存，请后续注意拍照留证
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {detailItem.source === "inspection" && (
+                <div>
+                  <h4 className="mb-3 text-body-lg font-bold text-site-dark flex items-center gap-2">
+                    <ImageIcon size={20} strokeWidth={2} className="text-site-orange" />
+                    现场照片
+                  </h4>
                   <div className="overflow-hidden rounded-btn border border-site-border">
                     {detailItem.photo ? (
                       <img
@@ -538,13 +566,43 @@ export default function RecordsPage() {
                         className="w-full max-h-80 object-cover"
                       />
                     ) : (
-                      <div className="flex h-48 w-full items-center justify-center bg-gray-50 text-site-darkLight">
-                        无照片记录
+                      <div className="flex h-48 w-full flex-col items-center justify-center gap-2 bg-gray-50">
+                        <CameraOff size={32} className="text-site-darkLight/50" strokeWidth={1.5} />
+                        <span className="text-body-md font-semibold text-site-darkLight">未留存现场照片</span>
                       </div>
                     )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
+
+              {detailItem.source === "rework" && detailItem.notifications && detailItem.notifications.length > 0 && (
+                <div className="card overflow-hidden !shadow-none border border-site-border">
+                  <div className="border-b border-site-border bg-gray-50/80 px-5 py-3">
+                    <h4 className="text-body-lg font-bold text-site-dark flex items-center gap-2">
+                      <Bell size={20} className="text-site-orange" strokeWidth={2.5} />
+                      通知记录
+                    </h4>
+                  </div>
+                  <div className="divide-y divide-site-border/60 px-5 py-3">
+                    {detailItem.notifications.map((n) => (
+                      <div key={n.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-site-orange/10">
+                          <Bell size={14} className="text-site-orange" strokeWidth={2} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-body-md font-bold text-site-dark">{n.workerName}</span>
+                            <span className="text-body-md text-site-darkLight">{n.time}</span>
+                          </div>
+                          {n.remark && (
+                            <p className="mt-0.5 text-body-md text-site-darkLight">{n.remark}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="card !shadow-none border border-site-border p-4">
                 <div className="flex items-start gap-3">
